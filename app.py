@@ -14,6 +14,7 @@ See CARDS_SHOWN for why three.
 from __future__ import annotations
 
 import os
+import re
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -36,6 +37,13 @@ def _catalog():
 
 @st.cache_resource(show_spinner="Loading CLIP text encoder…")
 def _warm_text_encoder():
+    """Load the text tower at boot rather than on the first question.
+
+    Streamlit Cloud boots the app once and keeps it warm, so paying ~0.6GB of
+    model download during startup is far better than making the first user wait
+    for it mid-question. The ViT-L/14 image tower is deliberately NOT warmed --
+    it is 1.7GB and a text-only session never needs it.
+    """
     core.embed_text("warmup")
     return True
 
@@ -51,11 +59,17 @@ def _missing_keys(model_key: str) -> str | None:
 st.sidebar.title("🛍️ Product Assistant")
 st.sidebar.caption("CLIP retrieval + grounded LLM answers over 10,001 Amazon products")
 
+# Default to the fast model. llama-3.3-70b scores best on the evaluation rubric
+# (13/14 vs 12/14) but answers in ~8-10s against ~1.4s, and on a CPU deployment
+# that gap dominates the interaction. The better model stays one click away.
+_MODEL_ORDER = ["gpt-4o-mini", "llama-3.3-70b", "llama-3.1-8b"]
 model_key = st.sidebar.selectbox(
     "Answer model",
-    list(core.MODELS),
+    [k for k in _MODEL_ORDER if k in core.MODELS],
     format_func=lambda k: core.MODELS[k]["label"],
     index=0,
+    help="Llama 3.3 70B scores highest on our evaluation (13/14) but is ~6x "
+         "slower. GPT-4o-mini scores 12/14 and answers in about a second.",
 )
 use_mq = st.sidebar.toggle(
     "MultiQuery retrieval", value=True,
@@ -114,6 +128,24 @@ def _history():
 CARDS_SHOWN = 3
 LLM_CANDIDATES = 5
 
+# Streamlit re-runs the whole script on every interaction and re-renders the
+# entire transcript, so page weight is paid again on each keystroke-submit.
+# Product photos dominate that weight, so they are requested as CDN thumbnails
+# and old turns stop rendering images entirely.
+FULL_RENDER_TURNS = 6          # recent turns keep their images
+
+
+def _thumb(url: str, px: int = 200) -> str:
+    """Ask Amazon's CDN for a resized image instead of the full-resolution one.
+
+    Inserting ._SX<px>_ before the extension is an Amazon CDN convention and
+    cuts roughly 80% of the bytes (43KB -> 8KB measured), which is the single
+    biggest lever on how heavy the page feels.
+    """
+    if not url or "images-na.ssl-images-amazon.com" not in url and "media-amazon.com" not in url:
+        return url
+    return re.sub(r"\.(jpg|jpeg|png)$", rf"._SX{px}_.\1", url, flags=re.I)
+
 
 def _render_products(items, caption_score: str = "match", limit: int = CARDS_SHOWN):
     """Product cards at a fixed width.
@@ -129,7 +161,7 @@ def _render_products(items, caption_score: str = "match", limit: int = CARDS_SHO
     for col, d in zip(cols, items):
         with col:
             if d.get("image_url"):
-                st.image(d["image_url"], width=170)
+                st.image(_thumb(d["image_url"], 260), width=170)
             st.markdown(f"**{d['product_name'][:60]}**")
             meta = [x for x in (d.get("price"), d.get("category")) if x]
             if meta:
@@ -157,7 +189,7 @@ def _render_ranked(items, top_caption: str, alt_heading: str,
     left, right = st.columns([1, 2], vertical_alignment="center")
     with left:
         if top.get("image_url"):
-            st.image(top["image_url"], width=200)
+            st.image(_thumb(top["image_url"], 300), width=200)
     with right:
         st.markdown(f"**{top['product_name'][:90]}**")
         meta = [x for x in (top.get("price"), top.get("category")) if x]
@@ -174,7 +206,7 @@ def _render_ranked(items, top_caption: str, alt_heading: str,
         for col, d in zip(cols, others):
             with col:
                 if d.get("image_url"):
-                    st.image(d["image_url"], width=95)
+                    st.image(_thumb(d["image_url"], 150), width=95)
                 st.caption(d["product_name"][:38])
                 bits = [d.get("price") or ""]
                 if score_label and d.get("score") is not None:
@@ -191,11 +223,23 @@ def _render_identification(cands, confident: bool):
     )
 
 
-def _render_turn(turn: dict):
+def _render_turn(turn: dict, with_images: bool = True):
+    """Render one transcript turn.
+
+    with_images=False keeps the text but drops every photo. Older turns use it:
+    Streamlit replays the whole transcript on each interaction, so a long
+    conversation otherwise accumulates dozens of remote images that the browser
+    re-lays-out every time, which is what makes typing feel laggy.
+    """
     with st.chat_message(turn["role"]):
-        if turn.get("image") is not None:
+        if turn.get("image") is not None and with_images:
             st.image(turn["image"], width=220)
         st.markdown(turn["content"])
+        if not with_images and (turn.get("products") or turn.get("image") is not None):
+            st.caption("_(images hidden — scroll-back is trimmed to keep typing responsive)_")
+            if turn.get("sources"):
+                st.caption(f"**Sources:** {turn['sources']}")
+            return
         if turn.get("gate"):
             g = turn["gate"]
             if g["confident"]:
@@ -249,9 +293,14 @@ if not st.session_state.get("rendered"):
         )
 
 _catalog()
+_warm_text_encoder()
 
-for turn in st.session_state.rendered:
-    _render_turn(turn)
+_transcript = st.session_state.rendered
+_cutoff = max(0, len(_transcript) - FULL_RENDER_TURNS)
+if _cutoff:
+    st.caption(f"_{_cutoff} earlier message(s) shown without images._")
+for _i, turn in enumerate(_transcript):
+    _render_turn(turn, with_images=_i >= _cutoff)
 
 
 # ───────────────────────────────────────────────────────── input

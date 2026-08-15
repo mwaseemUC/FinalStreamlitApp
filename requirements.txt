@@ -9,11 +9,13 @@ pyarrow>=15.0
 pillow>=10.0
 python-dotenv>=1.0
 
-# CLIP encoders. CPU wheels are fine for serving: one uploaded image is a single
-# forward pass. On Streamlit Cloud, install the CPU build to avoid a 2.5GB CUDA
-# download -- see README.
+# CLIP encoders, CPU build. The default wheels are CUDA and run ~2.5GB, which
+# exceeds Streamlit Cloud's image limit; one uploaded image is a single forward
+# pass, so CPU is the right target for serving.
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2
-transformers>=4.40
+torchvision>=0.17      # transformers imports it when resolving image processors
+transformers>=4.40,<6
 
 # LLM providers
 langchain-core>=0.3
