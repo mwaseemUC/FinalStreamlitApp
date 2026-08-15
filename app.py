@@ -1,4 +1,4 @@
-"""Multimodal product-support assistant — Streamlit UI.
+"""Multimodal product-support assistant (Streamlit UI).
 
 Three interaction types, matching the project brief:
   1. text question              -> grounded answer with cited sources
@@ -83,9 +83,9 @@ st.sidebar.divider()
 st.sidebar.markdown(
     """**Measured performance**
 
-*Text* — 13/14 on the evaluation rubric (MultiQuery + Llama-3.3-70B).
+*Text*: 13/14 on the evaluation rubric (MultiQuery + Llama-3.3-70B).
 
-*Image* — on photographs the system has never seen, the top match is right
+*Image*: on photographs the system has never seen, the top match is right
 **59%** of the time; the **three shown** contain it **71%** of the time.
 The confidence gate answers ~65% of uploads at ~80% precision.
 
@@ -95,7 +95,7 @@ are shown rather than a single assertion."""
 
 missing = _missing_keys(model_key)
 if missing:
-    st.sidebar.error(f"{missing} not set — add it to `.env`")
+    st.sidebar.error(f"{missing} not set. Add it to `.env`")
 
 if st.sidebar.button("Clear conversation"):
     st.session_state.messages = []
@@ -237,7 +237,7 @@ def _render_turn(turn: dict, with_images: bool = True):
             st.image(turn["image"], width=220)
         st.markdown(turn["content"])
         if not with_images and (turn.get("products") or turn.get("image") is not None):
-            st.caption("_(images hidden — scroll-back is trimmed to keep typing responsive)_")
+            st.caption("_(images hidden; scroll-back is trimmed to keep typing responsive)_")
             if turn.get("sources"):
                 st.caption(f"**Sources:** {turn['sources']}")
             return
@@ -247,8 +247,8 @@ def _render_turn(turn: dict, with_images: bool = True):
                 st.success(f"Confident identification (p={g['confidence']:.2f})")
             else:
                 st.warning(
-                    f"Not confident (p={g['confidence']:.2f} < {g['threshold']:.2f}) — "
-                    "showing the closest matches instead of committing to one."
+                    f"Not confident (p={g['confidence']:.2f} < {g['threshold']:.2f}). "
+                    "Showing the closest matches instead of committing to one."
                 )
         if turn.get("products"):
             layout = turn.get("layout")
@@ -276,7 +276,7 @@ def _render_turn(turn: dict, with_images: bool = True):
 
 st.title("Multimodal Product Assistant")
 st.caption(
-    "Ask about products, ask to see one, or attach a photo — use the 📎 in the "
+    "Ask about products, ask to see one, or attach a photo. Use the 📎 in the "
     "message box, and type alongside it to ask something specific about the "
     "picture. Answers are grounded in the catalog: the assistant declines rather "
     "than guessing when the catalog doesn't cover your question."
@@ -285,12 +285,12 @@ st.caption(
 if not st.session_state.get("rendered"):
     with st.expander("What can I ask?", expanded=True):
         st.markdown(
-            "- **Text** — *“What's the price of the DB Longboards CoreFlex Crossbow?”*\n"
-            "- **See a product** — *“Can you show me a picture of a remote control car?”*\n"
-            "- **Attach a photo** (📎) — identifies the product from the catalog\n"
-            "- **Photo + your own question** — *“is this suitable for a toddler?”* "
+            "- **Text**: *“What's the price of the DB Longboards CoreFlex Crossbow?”*\n"
+            "- **See a product**: *“Can you show me a picture of a remote control car?”*\n"
+            "- **Attach a photo** (📎): identifies the product from the catalog\n"
+            "- **Photo + your own question**: *“is this suitable for a toddler?”* "
             "attached to an image, instead of the default identification\n"
-            "- **Follow-ups work** — *“what about the price of the first one?”*"
+            "- **Follow-ups work**: *“what about the price of the first one?”*"
         )
 
 _catalog()
@@ -350,8 +350,8 @@ if submission:
                 st.success(f"Confident identification (p={r['confidence']:.2f})")
             else:
                 st.warning(
-                    f"Not confident (p={r['confidence']:.2f} < {r['threshold']:.2f}) — "
-                    "showing the closest matches instead of committing to one."
+                    f"Not confident (p={r['confidence']:.2f} < {r['threshold']:.2f}). "
+                    "Showing the closest matches instead of committing to one."
                 )
             _render_identification(r["docs"], r["confident"])
             if r["sources"]:

@@ -402,7 +402,7 @@ def answer_text_question(question: str, model_key: str = "llama-3.3-70b",
         if kind != "not_aggregate":
             return {
                 "answer": ("That's a question about the catalog as a whole, and "
-                           "the catalog doesn't carry the data to answer it — I "
+                           "the catalog doesn't carry the data to answer it. I "
                            "have product names, categories, prices, descriptions "
                            "and images, but not ratings, reviews, sales or "
                            "stock.\n\nI can answer exactly: the most or least "

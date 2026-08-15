@@ -2,7 +2,7 @@
 
 A retrieval-augmented product-support chatbot over 10,001 Amazon products.
 Answers questions from **text**, returns **product photographs** on request, and
-identifies products from an **uploaded photo** — all grounded in the catalog,
+identifies products from an **uploaded photo**, all grounded in the catalog,
 with a calibrated confidence gate that declines rather than guessing.
 
 Built for GEN AI Principles Course Project II. The research, evaluation, and
@@ -32,7 +32,7 @@ inventing an answer. That behaviour is the main thing the evaluation measures.
 | Image gate | Precision @ coverage | **0.804 @ 0.650** (AUC 0.903) |
 
 "Held-out" means the query photo is a *different* picture of the product from the
-one indexed — the honest analogue of a customer's own photo.
+one indexed, the honest analogue of a customer's own photo.
 
 **Roughly 1 in 5 confident image identifications is still wrong.** The UI shows
 three ranked candidates with photos instead of asserting one identity: the top
@@ -59,7 +59,7 @@ streamlit run app.py
 ```
 
 A free Groq key ([console.groq.com/keys](https://console.groq.com/keys)) is
-enough — it serves both open-weights Llama models. `OPENAI_API_KEY` is only
+enough; it serves both open-weights Llama models. `OPENAI_API_KEY` is only
 needed for the GPT-4o-mini option.
 
 ## Artifacts
@@ -68,9 +68,9 @@ needed for the GPT-4o-mini option.
 
 | File | Size | Contents |
 |---|---|---|
-| `b32_text.npy` | 10 MB | CLIP ViT-B/32 text embeddings — chat retrieval |
-| `l14_text.npy` | 15 MB | CLIP ViT-L/14 text embeddings — image path |
-| `l14_image.npy` | 15 MB | CLIP ViT-L/14 image embeddings — image path |
+| `b32_text.npy` | 10 MB | CLIP ViT-B/32 text embeddings for chat retrieval |
+| `l14_text.npy` | 15 MB | CLIP ViT-L/14 text embeddings for the image path |
+| `l14_image.npy` | 15 MB | CLIP ViT-L/14 image embeddings for the image path |
 | `products.parquet` | 5 MB | Product metadata and CDN image URLs |
 | `config.json` | 1 MB | Ids, fusion α, calibrated gate coefficients |
 
@@ -81,7 +81,7 @@ GENAI_DATA_DIR=/path/to/genai-final-data python prepare_artifacts.py
 ```
 
 **No vector database.** At 10k products a cosine search is a `(10001, 768)`
-matmul — under a millisecond in numpy, and measured at **0.04 s** end-to-end per
+matmul, under a millisecond in numpy, and measured at **0.04 s** end-to-end per
 uploaded image including CLIP inference. Chroma is used in the research notebook
 for the coursework requirement; deploying it here would add a process and a
 250 MB sqlite file to serve queries that numpy already answers instantly.
@@ -114,7 +114,7 @@ torch>=2.2
 ```
 
 First run downloads the CLIP weights from HuggingFace (~0.6 GB for ViT-B/32,
-~1.7 GB for ViT-L/14). They are cached afterwards, but the cold start is slow —
+~1.7 GB for ViT-L/14). They are cached afterwards, but the cold start is slow:
 the text encoder loads eagerly, and the image encoder only on first upload, so a
 text-only session never pays for ViT-L/14.
 
@@ -178,15 +178,15 @@ compromise.
 | File | Purpose |
 |---|---|
 | `app.py` | Streamlit UI, routing, transcript rendering |
-| `rag_core.py` | All retrieval, fusion, gating, prompts, and answer generation — no Streamlit import, so it is testable and reusable |
+| `rag_core.py` | All retrieval, fusion, gating, prompts, and answer generation, with no Streamlit import, so it is testable and reusable |
 | `prepare_artifacts.py` | Builds the serving bundle from the research project |
 | `smoke_test.py` | Exercises every path the UI uses; `--llm` adds live generation |
 
 ## Known limitations
 
 - **~1 in 5 confident image answers is wrong** at the calibrated gate. Assistive, not autonomous.
-- **Held-out photos are still catalog photos** — professionally lit, plain background. A real phone snapshot is harder, so 0.592 is an upper bound on true upload performance.
+- **Held-out photos are still catalog photos**: professionally lit, plain background. A real phone snapshot is harder, so 0.592 is an upper bound on true upload performance.
 - **Conversation memory is a query rewrite**, not full dialogue state. It resolves "the first one" and "the blue one" but does not track long-range context.
-- **No reranking.** Recall@50 is 0.873 against Recall@1 0.592, so the correct product is usually retrieved but not ranked first — the clearest remaining headroom.
+- **No reranking.** Recall@50 is 0.873 against Recall@1 0.592, so the correct product is usually retrieved but not ranked first, the clearest remaining headroom.
 - **Groq free tier has a daily token cap** that a long demo session can hit. Switch to GPT-4o-mini as a fallback.
 - **Catalog is toy-heavy** (~67% Toys & Games), so coverage outside that is thin and the assistant declines more often there.

@@ -23,7 +23,7 @@ ok = True
 def check(label: str, condition: bool, detail: str = "") -> None:
     global ok
     ok = ok and condition
-    print(f"  [{'PASS' if condition else 'FAIL'}] {label}" + (f" — {detail}" if detail else ""))
+    print(f"  [{'PASS' if condition else 'FAIL'}] {label}" + (f": {detail}" if detail else ""))
 
 
 print("=" * 72)
@@ -32,7 +32,7 @@ print("=" * 72)
 t0 = time.time()
 cat = core.load_catalog()
 load_s = time.time() - t0
-print(f"  loaded in {load_s:.1f}s — {len(cat.text_ids):,} products, "
+print(f"  loaded in {load_s:.1f}s, {len(cat.text_ids):,} products, "
       f"alpha={cat.alpha}, gate threshold={cat.gate['threshold']:.2f}")
 check("catalog size", len(cat.text_ids) == 10001)
 check("fusion matrices aligned",
@@ -60,7 +60,7 @@ cases = [
 ]
 for q, expected in cases:
     got = core.wants_a_picture(q)
-    check(f"route {'IMAGE' if expected else 'TEXT '} — {q[:46]}", got == expected)
+    check(f"route {'IMAGE' if expected else 'TEXT '}: {q[:46]}", got == expected)
 print(f"  stripped: '{core.strip_image_request(cases[0][0])}'")
 imgs = core.find_product_images("a remote control car", k=3)
 for d in imgs:
@@ -73,7 +73,7 @@ print("=" * 72)
 qdir = Path(r"C:\Users\wasee\genai-final-data\cache\image_cache_query")
 samples = sorted(qdir.glob("*.jpg"))[:12] if qdir.exists() else []
 if not samples:
-    print("  (held-out photos unavailable on this machine — skipping)")
+    print("  (held-out photos unavailable on this machine, skipping)")
 else:
     n_correct = n_conf = 0
     t0 = time.time()
@@ -86,7 +86,7 @@ else:
     print(f"  {len(samples)} held-out photos: top-1 correct {n_correct}/{len(samples)}, "
           f"gate answered {n_conf}/{len(samples)}, {dt:.2f}s per image")
     r = core.identify_from_image(samples[3])
-    print(f"  example — true: {cat.name(samples[3].stem)[:52]}")
+    print(f"  example, true: {cat.name(samples[3].stem)[:52]}")
     print(f"    gate: {'ANSWER' if r['confident'] else 'DECLINE'} p={r['confidence']:.3f}")
     for i, d in enumerate(r["candidates"][:3], 1):
         mark = "<-- correct" if d["uniq_id"] == samples[3].stem else ""
@@ -122,7 +122,7 @@ if WITH_LLM:
         print(f"  follow-up rewrite: 'what about the price of the first one?' -> '{rq[:80]}'")
         check("follow-up rewritten to standalone", rq.lower() != "what about the price of the first one?")
 else:
-    print("\n(skipping LLM generation — pass --llm to include it)")
+    print("\n(skipping LLM generation; pass --llm to include it)")
 
 print("\n" + "=" * 72)
 print("ALL PASS" if ok else "FAILURES ABOVE")
