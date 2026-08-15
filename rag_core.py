@@ -564,9 +564,25 @@ def answer_aggregate(question: str, kind: str | None = None) -> dict | None:
     if kind == "unsupported":
         return None
 
+    # An aggregate can be scoped ("most expensive funko pop"). Computing the
+    # global maximum for a scoped question returns a real product that answers
+    # a question nobody asked.
+    subject = _aggregate_subject(question)
+
     # ---- count -----------------------------------------------------------
     if kind == "count" or (kind is None and re.search(r"\bhow many\b", q)
                            and not _PRICE_WORD.search(q)):
+        if subject:
+            pool, how = _scope_to_subject(df, subject)
+            if not len(pool):
+                return {"answer": f"I couldn't find any products matching "
+                                  f"“{subject}” in the catalog.",
+                        "docs": [], "kind": "count"}
+            return {"answer": f"The catalog contains **{len(pool):,}** products "
+                              f"matching “{subject}”.",
+                    "docs": [_hit(cat, r["uniq_id"], 0.0)
+                             for _, r in pool.head(3).iterrows()],
+                    "kind": "count"}
         return {"answer": f"The catalog contains {len(df):,} products.",
                 "docs": [], "kind": "count"}
 
@@ -583,30 +599,102 @@ def answer_aggregate(question: str, kind: str | None = None) -> dict | None:
         )
     )
     if is_price_super:
+        pool, how = _scope_to_subject(priced, subject)
+        if subject and not len(pool):
+            return {"answer": (f"I couldn't find any products matching “{subject}” "
+                               f"in the catalog, so I can't work that out. "
+                               f"Try a different wording, or ask about the catalog "
+                               f"as a whole."),
+                    "docs": [], "kind": "unsupported_scope"}
+        scope = f" matching “{subject}”" if subject else " in the catalog"
+        basis = (f"Computed across all {len(pool):,} products{scope} with a listed "
+                 f"price" + (f" ({how})" if subject else "") + ", not from "
+                 "retrieved documents.")
+
         if kind == "average_price" or (kind is None and re.search(r"\b(average|mean)\b", q)):
-            return {"answer": f"The average price across the {len(priced):,} "
-                              f"products with a listed price is "
-                              f"${priced['_price_value'].mean():,.2f}.",
+            return {"answer": f"The average price across the {len(pool):,} "
+                              f"products{scope} with a listed price is "
+                              f"**${pool['_price_value'].mean():,.2f}**.",
                     "docs": [], "kind": "average_price"}
 
         cheapest = (kind == "least_expensive" if kind
                     else bool(re.search(r"\b(cheapest|least expensive|lowest|min)", q)))
-        row = (priced.nsmallest(1, "_price_value") if cheapest
-               else priced.nlargest(1, "_price_value")).iloc[0]
+        top = (pool.nsmallest(5, "_price_value") if cheapest
+               else pool.nlargest(5, "_price_value"))
+        row = top.iloc[0]
         label = "least" if cheapest else "most"
-        top = (priced.nsmallest(5, "_price_value") if cheapest
-               else priced.nlargest(5, "_price_value"))
         return {
-            "answer": (f"The {label} expensive product in the catalog is "
+            "answer": (f"The {label} expensive product{scope} is "
                        f"**{row['product_name']}** at {row['selling_price']}.\n\n"
-                       f"(Computed over all {len(priced):,} products with a listed "
-                       f"price, not from retrieved documents.)"),
+                       f"({basis})"),
             "docs": [_hit(cat, r["uniq_id"], float(r["_price_value"]))
                      for _, r in top.iterrows()],
             "kind": f"{label}_expensive",
         }
 
     return None
+
+
+# Words that carry no product meaning in an aggregate question. Everything left
+# after removing these is treated as the SUBJECT the aggregate is scoped to:
+# "most expensive funko pop" -> "funko pop".
+_AGG_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "of", "in", "on", "for", "to", "do",
+    "does", "you", "your", "yours", "i", "me", "my", "we", "us", "have", "has",
+    "got", "sell", "sells", "selling", "carry", "there", "here", "it", "its",
+    "what", "whats", "which", "who", "how", "many", "much", "tell", "show",
+    "find", "give", "can", "could", "please", "and", "or", "any", "some", "all",
+    "most", "least", "cheapest", "priciest", "dearest", "expensive", "cheap",
+    "cheaper", "price", "priced", "prices", "pricing", "cost", "costs", "costly",
+    "highest", "lowest", "max", "maximum", "min", "minimum", "top", "best",
+    "average", "mean", "median", "typical", "usual", "total", "overall",
+    "product", "products", "item", "items", "thing", "things", "stuff",
+    "catalog", "catalogue", "store", "shop", "inventory", "money", "dollar",
+    "dollars", "worth", "one", "ones", "that", "this", "these", "those",
+}
+
+
+def _aggregate_subject(question: str) -> str:
+    """What the aggregate is scoped to, if anything.
+
+    "what's the most expensive product" -> ""            (whole catalog)
+    "most expensive funko pop"           -> "funko pop"   (scoped)
+    """
+    toks = [t for t in re.findall(r"[a-z0-9'&-]+", question.lower())
+            if t not in _AGG_STOPWORDS and len(t) > 1]
+    return " ".join(toks).strip()
+
+
+def _scope_to_subject(df, subject: str):
+    """Narrow the candidate pool to products matching `subject`.
+
+    Literal token matching first -- for a brand like "funko pop" that is both
+    precise and complete, which semantic search is not. Falls back to retrieval
+    when the words do not appear literally ("gifts for toddlers").
+    Returns (pool, how) where how describes the match for the user.
+    """
+    if not subject:
+        return df, ""
+
+    hay = (df["product_name"].fillna("") + " " + df["category"].fillna("")).str.lower()
+    mask = None
+    for tok in subject.split():
+        # Crude singular stem so "funko pops" matches "Funko Pop!". Substring
+        # rather than word-boundary matching, so plurals and punctuation
+        # ("Pop!", "Pops") fall out for free.
+        stem = tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok
+        m = hay.str.contains(re.escape(stem), regex=True, na=False)
+        mask = m if mask is None else (mask & m)
+    if mask is not None and mask.any():
+        return df[mask], "name or category"
+
+    # NO semantic fallback here, deliberately. Retrieval always returns its
+    # k nearest products, however unrelated -- so taking a maximum over them
+    # reintroduces exactly the bug this function exists to prevent: a confident
+    # answer about "the most expensive flying unicorn submarine" that is really
+    # just the most expensive item in an arbitrary pool. If the words do not
+    # appear in the catalog, say so.
+    return df.iloc[0:0], "none"
 
 
 def _parse_price(s) -> float | None:
