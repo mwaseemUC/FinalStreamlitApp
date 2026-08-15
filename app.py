@@ -6,9 +6,10 @@ Three interaction types, matching the project brief:
   3. image upload               -> identification, confidence-gated
 
 Design note: the image path deliberately presents *candidates* rather than
-asserting one identity. Measured on held-out photos, top-1 is right 59% of the
-time and top-5 contains the answer 75% of the time, so a ranked shortlist is an
-honest surface for the accuracy the system actually has.
+asserting one identity. Measured on held-out photos, the top result is right
+59% of the time while the top three contain the answer 71% of the time, so a
+short ranked list is an honest surface for the accuracy the system actually has.
+See CARDS_SHOWN for why three.
 """
 from __future__ import annotations
 
@@ -69,11 +70,12 @@ st.sidebar.markdown(
 
 *Text* — 13/14 on the evaluation rubric (MultiQuery + Llama-3.3-70B).
 
-*Image* — R@1 0.59, R@5 0.75 on photographs the system has never seen.
+*Image* — on photographs the system has never seen, the top match is right
+**59%** of the time; the **three shown** contain it **71%** of the time.
 The confidence gate answers ~65% of uploads at ~80% precision.
 
-**~1 in 5 confident image answers is still wrong**, which is why candidates are
-shown rather than a single assertion."""
+**~1 in 5 confident image answers is still wrong**, which is why three candidates
+are shown rather than a single assertion."""
 )
 
 missing = _missing_keys(model_key)
@@ -97,7 +99,23 @@ def _history():
     return st.session_state.messages
 
 
-def _render_products(items, caption_score: str = "match", limit: int = 3):
+# How many product cards to show, and why.
+#
+# Measured on 7,172 held-out photos (ViT-L/14 + fusion), the chance the correct
+# product is among the cards shown:
+#     1 card  0.592     3 cards 0.714     5 cards 0.751
+#     2 cards 0.676     4 cards 0.735    10 cards 0.799
+# The gain flattens after the third card (+3.8 pts for the 3rd, +2.1 for the
+# 4th, +1.7 for the 5th), so 3 is where extra clutter stops paying for itself.
+#
+# The LLM still receives 5 candidates as context -- more context helps it
+# recover a match ranked 2-5 -- so the model reads more than the user sees.
+# That split is deliberate, not an oversight.
+CARDS_SHOWN = 3
+LLM_CANDIDATES = 5
+
+
+def _render_products(items, caption_score: str = "match", limit: int = CARDS_SHOWN):
     """Product cards at a fixed width.
 
     Catalog images have wildly varying aspect ratios (banner art next to a boxed
@@ -219,7 +237,7 @@ if submission:
                     f"Not confident (p={r['confidence']:.2f} < {r['threshold']:.2f}) — "
                     "showing the closest matches instead of committing to one."
                 )
-            _render_products(r["docs"], "similarity")
+            _render_products(r["docs"], "similarity", limit=CARDS_SHOWN)
             if r["sources"]:
                 st.caption(f"**Sources:** {r['sources']}")
             turn = {"role": "assistant", "content": r["answer"], "sources": r["sources"],
@@ -233,11 +251,11 @@ if submission:
         elif core.wants_a_picture(question):
             target = core.strip_image_request(question)
             with st.spinner("Finding product images…"):
-                items = core.find_product_images(target, k=3)
+                items = core.find_product_images(target, k=CARDS_SHOWN)
             msg = (f"Here {'is' if len(items) == 1 else 'are'} the closest "
                    f"{'match' if len(items) == 1 else 'matches'} for **{target}**:")
             st.markdown(msg)
-            _render_products(items, "similarity")
+            _render_products(items, "similarity", limit=CARDS_SHOWN)
             st.caption("Shown by visual match against the catalog. "
                        "If none of these look right, the catalog may not carry it.")
             turn = {"role": "assistant", "content": msg, "products": items,
@@ -268,7 +286,7 @@ if submission:
             if shown:
                 label = ("price rank" if str(r.get("aggregate", "")).endswith("expensive")
                          else "match")
-                _render_products(shown, label)
+                _render_products(shown, label, limit=CARDS_SHOWN)
                 if not cited and r.get("aggregate"):
                     st.caption("Computed across the full catalog, not from retrieval.")
 

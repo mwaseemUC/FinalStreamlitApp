@@ -35,10 +35,12 @@ inventing an answer. That behaviour is the main thing the evaluation measures.
 one indexed — the honest analogue of a customer's own photo.
 
 **Roughly 1 in 5 confident image identifications is still wrong.** The UI shows
-ranked candidates with photos instead of asserting one identity, because
-Recall@5 (0.751) is a much sounder basis for *"is it one of these?"* than
-Recall@1 (0.592) is for *"this is it."* This is an assistive system, not an
-autonomous one.
+three ranked candidates with photos instead of asserting one identity: the top
+match alone is right 59% of the time, while the three shown contain the answer
+71% of the time. Three is where the gain flattens (+3.8 points for the third
+card, +2.1 for a fourth, +1.7 for a fifth), so it is the point past which extra
+clutter stops paying for itself. This is an assistive system, not an autonomous
+one.
 
 ---
 
