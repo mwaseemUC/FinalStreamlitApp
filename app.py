@@ -138,18 +138,21 @@ def _render_products(items, caption_score: str = "match", limit: int = CARDS_SHO
                 st.caption(f"{caption_score}: {d['score']:.3f}")
 
 
-def _render_identification(cands, confident: bool):
-    """Top match as the headline, the rest demoted to alternatives.
+def _render_ranked(items, top_caption: str, alt_heading: str,
+                   score_label: str | None = "similarity"):
+    """One headline result, the rest visibly secondary.
 
-    Three equal cards read as three equal guesses, which misrepresents what the
-    system is claiming. The top match is right 59% of the time on its own; the
-    two below it add 12 points of coverage. So the layout leads with one product
-    and keeps the others visible but secondary -- and when the gate is not
-    confident, the alternatives are given more prominence instead.
+    Equal-sized cards read as equally likely answers. That is wrong for both
+    paths that use this: an identification's top match is right 59% of the time
+    while the next two add 12 points between them, and a "most expensive" answer
+    has exactly one correct product with the others as context.
+
+    score_label=None hides the numeric score, for cases where the ranking
+    quantity (price) is already shown in the metadata line.
     """
-    if not cands:
+    if not items:
         return
-    top, others = cands[0], cands[1:CARDS_SHOWN]
+    top, others = items[0], items[1:CARDS_SHOWN]
 
     left, right = st.columns([1, 2], vertical_alignment="center")
     with left:
@@ -160,18 +163,32 @@ def _render_identification(cands, confident: bool):
         meta = [x for x in (top.get("price"), top.get("category")) if x]
         if meta:
             st.caption(" · ".join(meta))
-        st.caption(f"{'Top match' if confident else 'Closest match'} · "
-                   f"similarity {top['score']:.3f}")
+        caption = top_caption
+        if score_label and top.get("score") is not None:
+            caption += f" · {score_label} {top['score']:.3f}"
+        st.caption(caption)
 
     if others:
-        st.caption("**Could also be**" if not confident else "**Other close matches**")
+        st.caption(f"**{alt_heading}**")
         cols = st.columns(len(others) * 2)          # keep them visually smaller
         for col, d in zip(cols, others):
             with col:
                 if d.get("image_url"):
                     st.image(d["image_url"], width=95)
-                st.caption(f"{d['product_name'][:38]}")
-                st.caption(f"{d.get('price') or ''} · {d['score']:.3f}")
+                st.caption(d["product_name"][:38])
+                bits = [d.get("price") or ""]
+                if score_label and d.get("score") is not None:
+                    bits.append(f"{d['score']:.3f}")
+                st.caption(" · ".join(b for b in bits if b))
+
+
+def _render_identification(cands, confident: bool):
+    _render_ranked(
+        cands,
+        top_caption="Top match" if confident else "Closest match",
+        alt_heading="Other close matches" if confident else "Could also be",
+        score_label="similarity",
+    )
 
 
 def _render_turn(turn: dict):
@@ -189,9 +206,18 @@ def _render_turn(turn: dict):
                     "showing the closest matches instead of committing to one."
                 )
         if turn.get("products"):
-            if turn.get("layout") == "identification":
+            layout = turn.get("layout")
+            if layout == "identification":
                 _render_identification(turn["products"],
                                        turn.get("gate", {}).get("confident", False))
+            elif layout == "ranked":
+                most = turn.get("aggregate") == "most_expensive"
+                _render_ranked(
+                    turn["products"],
+                    top_caption="Most expensive" if most else "Least expensive",
+                    alt_heading="Next most expensive" if most else "Next least expensive",
+                    score_label=None,
+                )
             else:
                 _render_products(turn["products"], turn.get("score_label", "match"))
         if turn.get("sources"):
@@ -324,16 +350,28 @@ if submission:
 
             if r["sources"] and "<None>" not in r["sources"]:
                 st.caption(f"**Sources:** {r['sources']}")
+
+            agg_kind = str(r.get("aggregate") or "")
+            is_price_rank = agg_kind.endswith("expensive")
+            layout = "ranked" if is_price_rank else "row"
             if shown:
-                label = ("price rank" if str(r.get("aggregate", "")).endswith("expensive")
-                         else "match")
-                _render_products(shown, label, limit=CARDS_SHOWN)
-                if not cited and r.get("aggregate"):
-                    st.caption("Computed across the full catalog, not from retrieval.")
+                if is_price_rank:
+                    # One product IS the answer; the rest are context. Price is
+                    # already in the metadata line, so no numeric score.
+                    _render_ranked(
+                        shown,
+                        top_caption=("Most expensive" if agg_kind == "most_expensive"
+                                     else "Least expensive"),
+                        alt_heading=("Next most expensive" if agg_kind == "most_expensive"
+                                     else "Next least expensive"),
+                        score_label=None,
+                    )
+                else:
+                    _render_products(shown, "match", limit=CARDS_SHOWN)
 
             turn = {"role": "assistant", "content": r["answer"], "sources": r["sources"],
-                    "products": shown,
-                    "score_label": "price rank" if r.get("aggregate") else "match",
+                    "products": shown, "layout": layout, "aggregate": agg_kind,
+                    "score_label": "match",
                     "debug": {"queries": r["queries"],
                               "rewritten_query": r["rewritten_query"],
                               "aggregate": r.get("aggregate"),
