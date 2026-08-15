@@ -1,0 +1,21 @@
+# Serving dependencies only. The research project (Chroma, matplotlib, jupyter,
+# scikit-learn, nbconvert) is deliberately NOT required here -- retrieval at this
+# scale is a numpy matmul, so there is no vector database to deploy.
+
+streamlit>=1.40
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15.0
+pillow>=10.0
+python-dotenv>=1.0
+
+# CLIP encoders. CPU wheels are fine for serving: one uploaded image is a single
+# forward pass. On Streamlit Cloud, install the CPU build to avoid a 2.5GB CUDA
+# download -- see README.
+torch>=2.2
+transformers>=4.40
+
+# LLM providers
+langchain-core>=0.3
+langchain-openai>=0.2
+langchain-groq>=0.2
