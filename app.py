@@ -59,17 +59,18 @@ def _missing_keys(model_key: str) -> str | None:
 st.sidebar.title("🛍️ Product Assistant")
 st.sidebar.caption("CLIP retrieval + grounded LLM answers over 10,001 Amazon products")
 
-# Default to the fast model. llama-3.3-70b scores best on the evaluation rubric
-# (13/14 vs 12/14) but answers in ~8-10s against ~1.4s, and on a CPU deployment
-# that gap dominates the interaction. The better model stays one click away.
-_MODEL_ORDER = ["gpt-4o-mini", "llama-3.3-70b", "llama-3.1-8b"]
+# Default to the open-weights model: it scores highest on our evaluation rubric
+# (13/14 vs 12/14) and satisfies the project's open-source LLM requirement.
+# It is slower (~8-10s vs ~1.4s), so gpt-4o-mini is offered as a fast fallback.
+_MODEL_ORDER = ["llama-3.3-70b", "gpt-4o-mini", "llama-3.1-8b"]
 model_key = st.sidebar.selectbox(
     "Answer model",
     [k for k in _MODEL_ORDER if k in core.MODELS],
     format_func=lambda k: core.MODELS[k]["label"],
     index=0,
-    help="Llama 3.3 70B scores highest on our evaluation (13/14) but is ~6x "
-         "slower. GPT-4o-mini scores 12/14 and answers in about a second.",
+    help="Llama 3.3 70B (default) scores highest on our evaluation, 13/14, and "
+         "is open-weights. GPT-4o-mini scores 12/14 and answers ~6x faster if "
+         "you need lower latency.",
 )
 use_mq = st.sidebar.toggle(
     "MultiQuery retrieval", value=True,
