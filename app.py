@@ -138,6 +138,42 @@ def _render_products(items, caption_score: str = "match", limit: int = CARDS_SHO
                 st.caption(f"{caption_score}: {d['score']:.3f}")
 
 
+def _render_identification(cands, confident: bool):
+    """Top match as the headline, the rest demoted to alternatives.
+
+    Three equal cards read as three equal guesses, which misrepresents what the
+    system is claiming. The top match is right 59% of the time on its own; the
+    two below it add 12 points of coverage. So the layout leads with one product
+    and keeps the others visible but secondary -- and when the gate is not
+    confident, the alternatives are given more prominence instead.
+    """
+    if not cands:
+        return
+    top, others = cands[0], cands[1:CARDS_SHOWN]
+
+    left, right = st.columns([1, 2], vertical_alignment="center")
+    with left:
+        if top.get("image_url"):
+            st.image(top["image_url"], width=200)
+    with right:
+        st.markdown(f"**{top['product_name'][:90]}**")
+        meta = [x for x in (top.get("price"), top.get("category")) if x]
+        if meta:
+            st.caption(" · ".join(meta))
+        st.caption(f"{'Top match' if confident else 'Closest match'} · "
+                   f"similarity {top['score']:.3f}")
+
+    if others:
+        st.caption("**Could also be**" if not confident else "**Other close matches**")
+        cols = st.columns(len(others) * 2)          # keep them visually smaller
+        for col, d in zip(cols, others):
+            with col:
+                if d.get("image_url"):
+                    st.image(d["image_url"], width=95)
+                st.caption(f"{d['product_name'][:38]}")
+                st.caption(f"{d.get('price') or ''} · {d['score']:.3f}")
+
+
 def _render_turn(turn: dict):
     with st.chat_message(turn["role"]):
         if turn.get("image") is not None:
@@ -153,7 +189,11 @@ def _render_turn(turn: dict):
                     "showing the closest matches instead of committing to one."
                 )
         if turn.get("products"):
-            _render_products(turn["products"], turn.get("score_label", "match"))
+            if turn.get("layout") == "identification":
+                _render_identification(turn["products"],
+                                       turn.get("gate", {}).get("confident", False))
+            else:
+                _render_products(turn["products"], turn.get("score_label", "match"))
         if turn.get("sources"):
             st.caption(f"**Sources:** {turn['sources']}")
         if turn.get("debug") and show_debug:
@@ -237,11 +277,12 @@ if submission:
                     f"Not confident (p={r['confidence']:.2f} < {r['threshold']:.2f}) — "
                     "showing the closest matches instead of committing to one."
                 )
-            _render_products(r["docs"], "similarity", limit=CARDS_SHOWN)
+            _render_identification(r["docs"], r["confident"])
             if r["sources"]:
                 st.caption(f"**Sources:** {r['sources']}")
             turn = {"role": "assistant", "content": r["answer"], "sources": r["sources"],
                     "products": r["docs"], "score_label": "similarity",
+                    "layout": "identification",
                     "gate": {"confident": r["confident"], "confidence": r["confidence"],
                              "threshold": r["threshold"]},
                     "debug": {"confidence": r["confidence"],
