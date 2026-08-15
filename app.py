@@ -137,10 +137,22 @@ def _render_turn(turn: dict):
 
 st.title("Multimodal Product Assistant")
 st.caption(
-    "Ask about products, ask to see one, or upload a photo to identify it. "
-    "Answers are grounded in the catalog — the assistant declines rather than "
-    "guessing when the catalog doesn't cover your question."
+    "Ask about products, ask to see one, or attach a photo — use the 📎 in the "
+    "message box, and type alongside it to ask something specific about the "
+    "picture. Answers are grounded in the catalog: the assistant declines rather "
+    "than guessing when the catalog doesn't cover your question."
 )
+
+if not st.session_state.get("rendered"):
+    with st.expander("What can I ask?", expanded=True):
+        st.markdown(
+            "- **Text** — *“What's the price of the DB Longboards CoreFlex Crossbow?”*\n"
+            "- **See a product** — *“Can you show me a picture of a remote control car?”*\n"
+            "- **Attach a photo** (📎) — identifies the product from the catalog\n"
+            "- **Photo + your own question** — *“is this suitable for a toddler?”* "
+            "attached to an image, instead of the default identification\n"
+            "- **Follow-ups work** — *“what about the price of the first one?”*"
+        )
 
 _catalog()
 
@@ -150,26 +162,41 @@ for turn in st.session_state.rendered:
 
 # ───────────────────────────────────────────────────────── input
 
-uploaded = st.file_uploader(
-    "Upload a product photo (optional)", type=["jpg", "jpeg", "png"],
-    label_visibility="collapsed",
+# One chat-level control for everything: type a question, attach a photo, or
+# both. Attaching without typing falls back to a default question, but the user
+# can always override it by typing alongside the attachment.
+submission = st.chat_input(
+    "Ask about a product, attach a photo, or both…",
+    accept_file=True,
+    file_type=["jpg", "jpeg", "png"],
 )
-prompt = st.chat_input("Ask about a product, or describe what you're looking for…")
 
-if prompt or uploaded:
+if submission:
     if missing:
         st.error(f"Set {missing} in `.env` before asking.")
         st.stop()
 
-    question = prompt or "Can you identify the product in this image and describe its usage?"
-    image = Image.open(uploaded) if uploaded else None
+    # ChatInputValue exposes .text and .files; stay tolerant of a plain string
+    # so the app still works if the input widget is ever swapped back.
+    text = (getattr(submission, "text", None) or "").strip() if not isinstance(
+        submission, str) else submission.strip()
+    files = list(getattr(submission, "files", []) or [])
+
+    image = Image.open(files[0]) if files else None
+    DEFAULT_IMAGE_Q = "Can you identify the product in this image and describe its usage?"
+    question = text or (DEFAULT_IMAGE_Q if image is not None else "")
+    if not question:
+        st.stop()
 
     user_turn = {"role": "user", "content": question, "image": image}
     st.session_state.rendered.append(user_turn)
     _render_turn(user_turn)
 
     with st.chat_message("assistant"):
-        # ── image upload ────────────────────────────────────────────────
+        # ── image attached (with or without an accompanying question) ────
+        # A typed question is passed through verbatim, so "what colour is this?"
+        # or "is this waterproof?" work on an uploaded photo, not just the
+        # default "identify this product".
         if image is not None:
             with st.spinner("Matching against the catalog…"):
                 r = core.answer_image_question(image, question, model_key,

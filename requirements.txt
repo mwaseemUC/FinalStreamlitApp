@@ -2,7 +2,7 @@
 # scikit-learn, nbconvert) is deliberately NOT required here -- retrieval at this
 # scale is a numpy matmul, so there is no vector database to deploy.
 
-streamlit>=1.40
+streamlit>=1.43        # chat_input(accept_file=...) — inline image attachment
 numpy>=1.26
 pandas>=2.2
 pyarrow>=15.0
