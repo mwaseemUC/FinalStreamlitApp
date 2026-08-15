@@ -378,6 +378,25 @@ def answer_text_question(question: str, model_key: str = "llama-3.3-70b",
     """Text chat path. Returns answer, sources, retrieved docs, and diagnostics."""
     from langchain_core.prompts import ChatPromptTemplate
 
+    # Catalog-wide questions are answered by computation, not retrieval. Doing
+    # this before the LLM sees anything prevents a confident wrong answer over
+    # an arbitrary top-k slice.
+    if is_aggregate_query(question):
+        agg = answer_aggregate(question)
+        if agg is not None:
+            return {"answer": agg["answer"], "sources": "", "docs": agg["docs"],
+                    "queries": [question], "rewritten_query": question,
+                    "aggregate": agg["kind"]}
+        return {
+            "answer": ("That's a question about the catalog as a whole, and I can "
+                       "only search for products similar to what you describe — so "
+                       "I can't answer it reliably. Try asking about a specific "
+                       "product, or ask for the most/least expensive product or "
+                       "how many products there are, which I can compute exactly."),
+            "sources": "", "docs": [], "queries": [question],
+            "rewritten_query": question, "aggregate": "unsupported",
+        }
+
     llm = get_chat_model(model_key)
     search_query = _resolve_followup(question, history, llm) if history else question
 
@@ -433,6 +452,98 @@ def answer_image_question(image, question: str | None = None,
 
 _IMAGE_REQUEST = re.compile(
     r"\b(show|see|picture|photo|image|what does .* look like|looks? like)\b", re.I)
+
+# ─────────────────────────────────────────────── aggregate queries
+
+_SUPERLATIVE = re.compile(
+    r"\b(most|least|cheapest|priciest|dearest|highest|lowest|max(?:imum)?|"
+    r"min(?:imum)?|biggest|smallest|top|average|mean|total|how many|count)\b", re.I)
+_PRICE_WORD = re.compile(r"\b(expensive|price[ds]?|cost(?:ly|s)?|cheap)\b", re.I)
+
+
+def is_aggregate_query(question: str) -> bool:
+    """Detect questions that depend on the WHOLE catalog, not on similar documents.
+
+    "What's the most expensive product?" cannot be answered by semantic
+    retrieval: the top-k most *similar* documents to that sentence have nothing
+    to do with the maximum price. Left unhandled, the model dutifully answers
+    "most expensive" over whatever 8 documents it was handed and produces a
+    confidently wrong answer that cites a real product -- the worst failure
+    shape, because it looks correct.
+    """
+    return bool(_SUPERLATIVE.search(question))
+
+
+def answer_aggregate(question: str) -> dict | None:
+    """Answer catalog-wide questions with a structured lookup instead of RAG.
+
+    Returns None when the question is an aggregate we cannot compute, so the
+    caller can decline honestly rather than guess.
+    """
+    cat = load_catalog()
+    q = question.lower()
+    df = cat.products
+
+    if "_price_value" not in df.columns:
+        df["_price_value"] = df["selling_price"].map(_parse_price)
+    priced = df[df["_price_value"].notna()]
+
+    # ---- count -----------------------------------------------------------
+    if re.search(r"\bhow many\b", q) and not _PRICE_WORD.search(q):
+        return {"answer": f"The catalog contains {len(df):,} products.",
+                "docs": [], "kind": "count"}
+
+    # ---- price superlatives / averages -----------------------------------
+    # Must be about PRICE, not merely contain a superlative: "the most popular
+    # product" also matches \bmost\b but is not a price question, and answering
+    # it with the most expensive product would be a confident non-sequitur.
+    is_price_super = (
+        re.search(r"\b(cheapest|priciest|dearest)\b", q)
+        or (re.search(r"\b(most|least)\b", q) and re.search(r"\bexpensive\b", q))
+        or (_PRICE_WORD.search(q)
+            and re.search(r"\b(most|least|highest|lowest|max|min|average|mean)\b", q))
+    )
+    if is_price_super:
+        if re.search(r"\b(average|mean)\b", q):
+            return {"answer": f"The average price across the {len(priced):,} "
+                              f"products with a listed price is "
+                              f"${priced['_price_value'].mean():,.2f}.",
+                    "docs": [], "kind": "average_price"}
+
+        cheapest = re.search(r"\b(cheapest|least expensive|lowest|min)", q)
+        row = (priced.nsmallest(1, "_price_value") if cheapest
+               else priced.nlargest(1, "_price_value")).iloc[0]
+        label = "least" if cheapest else "most"
+        top = (priced.nsmallest(5, "_price_value") if cheapest
+               else priced.nlargest(5, "_price_value"))
+        return {
+            "answer": (f"The {label} expensive product in the catalog is "
+                       f"**{row['product_name']}** at {row['selling_price']}.\n\n"
+                       f"(Computed over all {len(priced):,} products with a listed "
+                       f"price, not from retrieved documents.)"),
+            "docs": [_hit(cat, r["uniq_id"], float(r["_price_value"]))
+                     for _, r in top.iterrows()],
+            "kind": f"{label}_expensive",
+        }
+
+    return None
+
+
+def _parse_price(s) -> float | None:
+    if not isinstance(s, str) or not s:
+        return None
+    m = re.findall(r"\$\s*([\d,]+\.?\d*)", s)
+    return float(m[0].replace(",", "")) if m else None
+
+
+def cited_ids(sources: str) -> list[str]:
+    """Extract the uniq_ids the model actually cited from its SOURCES: line.
+
+    The UI should show what the ANSWER used, not everything retrieval returned --
+    otherwise an answer about one product is illustrated with the other seven
+    candidates, which reads as if the assistant got it wrong.
+    """
+    return re.findall(r"\(([0-9a-f]{32})\)", sources or "")
 
 
 def wants_a_picture(question: str) -> bool:

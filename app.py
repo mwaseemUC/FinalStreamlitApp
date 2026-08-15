@@ -97,17 +97,27 @@ def _history():
     return st.session_state.messages
 
 
-def _render_products(items, caption_score: str = "match"):
-    cols = st.columns(min(len(items), 3))
-    for col, d in zip(cols, items[:3]):
+def _render_products(items, caption_score: str = "match", limit: int = 3):
+    """Product cards at a fixed width.
+
+    Catalog images have wildly varying aspect ratios (banner art next to a boxed
+    game), so filling the column makes one card tower over its neighbours. A
+    fixed width keeps the row scannable.
+    """
+    items = items[:limit]
+    if not items:
+        return
+    cols = st.columns(len(items))
+    for col, d in zip(cols, items):
         with col:
             if d.get("image_url"):
-                st.image(d["image_url"], use_container_width=True)
-            st.markdown(f"**{d['product_name'][:70]}**")
+                st.image(d["image_url"], width=170)
+            st.markdown(f"**{d['product_name'][:60]}**")
             meta = [x for x in (d.get("price"), d.get("category")) if x]
             if meta:
                 st.caption(" · ".join(meta))
-            st.caption(f"{caption_score}: {d['score']:.3f}")
+            if d.get("score") is not None:
+                st.caption(f"{caption_score}: {d['score']:.3f}")
 
 
 def _render_turn(turn: dict):
@@ -240,13 +250,35 @@ if submission:
                 r = core.answer_text_question(question, model_key, use_mq,
                                               history=_history())
             st.markdown(r["answer"])
+
+            # Show the products the ANSWER cited, not everything retrieval
+            # returned. Showing all 8 candidates next to an answer about one of
+            # them reads as though the assistant picked the wrong product.
+            cited = core.cited_ids(r["sources"])
+            if cited:
+                by_id = {d["uniq_id"]: d for d in r["docs"]}
+                shown = [by_id[c] for c in cited if c in by_id]
+            elif r.get("aggregate"):
+                shown = r["docs"]        # computed answers show their own ranking
+            else:
+                shown = []
+
             if r["sources"] and "<None>" not in r["sources"]:
                 st.caption(f"**Sources:** {r['sources']}")
-                _render_products(r["docs"], "match")
+            if shown:
+                label = ("price rank" if str(r.get("aggregate", "")).endswith("expensive")
+                         else "match")
+                _render_products(shown, label)
+                if not cited and r.get("aggregate"):
+                    st.caption("Computed across the full catalog, not from retrieval.")
+
             turn = {"role": "assistant", "content": r["answer"], "sources": r["sources"],
-                    "products": r["docs"] if "<None>" not in r["sources"] else [],
+                    "products": shown,
+                    "score_label": "price rank" if r.get("aggregate") else "match",
                     "debug": {"queries": r["queries"],
                               "rewritten_query": r["rewritten_query"],
+                              "aggregate": r.get("aggregate"),
+                              "cited": cited,
                               "retrieved": [d["product_name"] for d in r["docs"]]}}
 
         if turn.get("debug") and show_debug:
