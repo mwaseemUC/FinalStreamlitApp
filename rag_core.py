@@ -382,20 +382,36 @@ def answer_text_question(question: str, model_key: str = "llama-3.3-70b",
     # this before the LLM sees anything prevents a confident wrong answer over
     # an arbitrary top-k slice.
     if is_aggregate_query(question):
-        agg = answer_aggregate(question)
+        agg = answer_aggregate(question)                  # fast keyword path
+        kind = None
+        if agg is None:
+            # Keywords could not resolve it. Before refusing, let the model
+            # classify the intent -- this is what makes typos and paraphrases
+            # work ("exepensive", "what costs the most money"), and lets an
+            # over-inclusive pre-filter hand ordinary questions back to search.
+            kind = classify_aggregate(question, get_chat_model(model_key))
+            if kind != "not_aggregate":
+                agg = answer_aggregate(question, kind=kind)
         if agg is not None:
             return {"answer": agg["answer"], "sources": "", "docs": agg["docs"],
                     "queries": [question], "rewritten_query": question,
                     "aggregate": agg["kind"]}
-        return {
-            "answer": ("That's a question about the catalog as a whole, and I can "
-                       "only search for products similar to what you describe — so "
-                       "I can't answer it reliably. Try asking about a specific "
-                       "product, or ask for the most/least expensive product or "
-                       "how many products there are, which I can compute exactly."),
-            "sources": "", "docs": [], "queries": [question],
-            "rewritten_query": question, "aggregate": "unsupported",
-        }
+        # Only refuse when the question really is a catalog-wide one we cannot
+        # compute. If the classifier says it is an ordinary product question,
+        # fall through to normal retrieval below.
+        if kind != "not_aggregate":
+            return {
+                "answer": ("That's a question about the catalog as a whole, and "
+                           "the catalog doesn't carry the data to answer it — I "
+                           "have product names, categories, prices, descriptions "
+                           "and images, but not ratings, reviews, sales or "
+                           "stock.\n\nI can answer exactly: the most or least "
+                           "expensive product, the average price, and how many "
+                           "products there are. Or ask me about any specific "
+                           "product."),
+                "sources": "", "docs": [], "queries": [question],
+                "rewritten_query": question, "aggregate": "unsupported",
+            }
 
     llm = get_chat_model(model_key)
     search_query = _resolve_followup(question, history, llm) if history else question
@@ -457,28 +473,85 @@ _IMAGE_REQUEST = re.compile(
 
 _SUPERLATIVE = re.compile(
     r"\b(most|least|cheapest|priciest|dearest|highest|lowest|max(?:imum)?|"
-    r"min(?:imum)?|biggest|smallest|top|average|mean|total|how many|count)\b", re.I)
-_PRICE_WORD = re.compile(r"\b(expensive|price[ds]?|cost(?:ly|s)?|cheap)\b", re.I)
+    r"min(?:imum)?|biggest|smallest|top|average|mean|median|typical|usual|"
+    r"total|overall|altogether|how many|how much.*(?:in total|overall)|count)\b",
+    re.I)
+_PRICE_WORD = re.compile(
+    r"\b(expensive|exp?ensive\w*|pric\w*|cost\w*|cheap\w*|dear)\b", re.I)
 
 
 def is_aggregate_query(question: str) -> bool:
-    """Detect questions that depend on the WHOLE catalog, not on similar documents.
+    """Cheap pre-filter for questions that depend on the WHOLE catalog.
 
     "What's the most expensive product?" cannot be answered by semantic
-    retrieval: the top-k most *similar* documents to that sentence have nothing
+    retrieval: the top-k documents most *similar* to that sentence have nothing
     to do with the maximum price. Left unhandled, the model dutifully answers
     "most expensive" over whatever 8 documents it was handed and produces a
-    confidently wrong answer that cites a real product -- the worst failure
-    shape, because it looks correct.
+    confidently wrong answer citing a real product -- the worst failure shape,
+    because it looks correct.
+
+    This only decides whether to spend one classification call, so it is
+    deliberately over-inclusive: a false positive costs a cheap LLM call that
+    returns "unsupported" and falls through to normal retrieval, while a false
+    negative costs a wrong answer.
     """
-    return bool(_SUPERLATIVE.search(question))
+    return bool(_SUPERLATIVE.search(question) or
+                (_PRICE_WORD.search(question) and
+                 re.search(r"\b(any|all|your|the) (product|item|thing|stuff)s?\b",
+                           question, re.I)))
 
 
-def answer_aggregate(question: str) -> dict | None:
+AGGREGATE_KINDS = ("most_expensive", "least_expensive", "count",
+                   "average_price", "unsupported", "not_aggregate")
+
+_CLASSIFY_PROMPT = """Classify the user's question about a product catalog into
+exactly one label. Reply with the label only, nothing else.
+
+most_expensive  - asks which product costs the most (highest price, priciest)
+least_expensive - asks which product costs the least (cheapest, lowest price)
+count           - asks how many products the catalog contains
+average_price   - asks for the average, typical or median price
+unsupported     - a question about the catalog AS A WHOLE that needs data we do
+                  not have (popularity, ratings, reviews, sales, stock, colours)
+not_aggregate   - an ordinary question about a specific product or category,
+                  answerable by searching for relevant products
+
+The catalog has only product names, categories, prices, descriptions and images.
+Tolerate typos and paraphrasing.
+
+Examples:
+"whats the most exepensive product" -> most_expensive
+"which item costs the most money" -> most_expensive
+"what is the most popular product" -> unsupported
+"do you have any cheap plush toys" -> not_aggregate
+"what's the price of the Qwinto" -> not_aggregate
+
+Question: {q}
+Label:"""
+
+
+def classify_aggregate(question: str, llm) -> str:
+    """Fallback intent classifier for aggregate questions.
+
+    Keyword matching is brittle in exactly the way that matters here: a typo
+    ("exepensive") or a paraphrase ("what costs the most money") routes a
+    question we CAN answer exactly into a refusal. One cheap LLM call on the
+    aggregate path is worth more than an ever-growing regex.
+    """
+    try:
+        label = llm.invoke(_CLASSIFY_PROMPT.format(q=question)).content.strip().lower()
+    except Exception:
+        return "unsupported"
+    label = re.sub(r"[^a-z_]", "", label)
+    return label if label in AGGREGATE_KINDS else "unsupported"
+
+
+def answer_aggregate(question: str, kind: str | None = None) -> dict | None:
     """Answer catalog-wide questions with a structured lookup instead of RAG.
 
-    Returns None when the question is an aggregate we cannot compute, so the
-    caller can decline honestly rather than guess.
+    `kind` forces a branch when the caller has already classified the question
+    (see classify_aggregate). Returns None when the question is an aggregate we
+    cannot compute, so the caller can decline honestly rather than guess.
     """
     cat = load_catalog()
     q = question.lower()
@@ -488,8 +561,12 @@ def answer_aggregate(question: str) -> dict | None:
         df["_price_value"] = df["selling_price"].map(_parse_price)
     priced = df[df["_price_value"].notna()]
 
+    if kind == "unsupported":
+        return None
+
     # ---- count -----------------------------------------------------------
-    if re.search(r"\bhow many\b", q) and not _PRICE_WORD.search(q):
+    if kind == "count" or (kind is None and re.search(r"\bhow many\b", q)
+                           and not _PRICE_WORD.search(q)):
         return {"answer": f"The catalog contains {len(df):,} products.",
                 "docs": [], "kind": "count"}
 
@@ -497,20 +574,23 @@ def answer_aggregate(question: str) -> dict | None:
     # Must be about PRICE, not merely contain a superlative: "the most popular
     # product" also matches \bmost\b but is not a price question, and answering
     # it with the most expensive product would be a confident non-sequitur.
-    is_price_super = (
-        re.search(r"\b(cheapest|priciest|dearest)\b", q)
-        or (re.search(r"\b(most|least)\b", q) and re.search(r"\bexpensive\b", q))
-        or (_PRICE_WORD.search(q)
-            and re.search(r"\b(most|least|highest|lowest|max|min|average|mean)\b", q))
+    is_price_super = kind in ("most_expensive", "least_expensive", "average_price") or (
+        kind is None and (
+            re.search(r"\b(cheapest|priciest|dearest)\b", q)
+            or (re.search(r"\b(most|least)\b", q) and re.search(r"\bexpensive\b", q))
+            or (_PRICE_WORD.search(q)
+                and re.search(r"\b(most|least|highest|lowest|max|min|average|mean)\b", q))
+        )
     )
     if is_price_super:
-        if re.search(r"\b(average|mean)\b", q):
+        if kind == "average_price" or (kind is None and re.search(r"\b(average|mean)\b", q)):
             return {"answer": f"The average price across the {len(priced):,} "
                               f"products with a listed price is "
                               f"${priced['_price_value'].mean():,.2f}.",
                     "docs": [], "kind": "average_price"}
 
-        cheapest = re.search(r"\b(cheapest|least expensive|lowest|min)", q)
+        cheapest = (kind == "least_expensive" if kind
+                    else bool(re.search(r"\b(cheapest|least expensive|lowest|min)", q)))
         row = (priced.nsmallest(1, "_price_value") if cheapest
                else priced.nlargest(1, "_price_value")).iloc[0]
         label = "least" if cheapest else "most"
