@@ -26,7 +26,7 @@ inventing an answer. That behaviour is the main thing the evaluation measures.
 
 | Path | Metric | Result |
 |---|---|---|
-| Text | Evaluation rubric (14 questions) | **13/14** with MultiQuery + Llama-3.3-70B |
+| Text | Evaluation rubric (14 questions) | **13/14** with MultiQuery + Llama-3.3-70B (retired by Groq; now served by GPT-OSS 120B) |
 | Text retrieval | Recall@5, 1,500 generated customer queries | 0.487 (0.395 without MultiQuery) |
 | Image | Recall@1 / Recall@5, **held-out** photos | **0.592 / 0.751** |
 | Image gate | Precision @ coverage | **0.804 @ 0.650** (AUC 0.903) |
@@ -59,7 +59,7 @@ streamlit run app.py
 ```
 
 A free Groq key ([console.groq.com/keys](https://console.groq.com/keys)) is
-enough; it serves both open-weights Llama models. `OPENAI_API_KEY` is only
+enough; it serves both open-weights GPT-OSS models. `OPENAI_API_KEY` is only
 needed for the GPT-4o-mini option.
 
 ## Artifacts
@@ -163,7 +163,7 @@ Pre-baking the HuggingFace cache into the image avoids the cold-start download.
     └────────────┬───────┘          │      └───────┬─────────────────┘
                  │                  │              │
     ┌────────────▼──────────────────▼──────────────▼─────────────────┐
-    │  LLM (Llama-3.3-70B / Llama-3.1-8B / GPT-4o-mini)              │
+    │  LLM (GPT-OSS-120B / GPT-OSS-20B / GPT-4o-mini)                │
     │  few-shot grounding contract + SOURCES: citation line          │
     └────────────────────────────────────────────────────────────────┘
 ```

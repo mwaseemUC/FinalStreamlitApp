@@ -238,7 +238,8 @@ def _hit(cat: Catalog, uid: str, score: float) -> dict:
 
 
 def generate_multi_queries(question: str, llm, n: int = 3) -> list[str]:
-    """Query expansion. Measured best text config: MultiQuery + llama-3.3-70b."""
+    """Query expansion. Measured best text config: MultiQuery + llama-3.3-70b
+    (now served by openai/gpt-oss-120b -- see DEPRECATION_NOTE)."""
     raw = llm.invoke(MULTI_QUERY_PROMPT.format(question=question, n=n)).content
     out = [question.strip()]
     for line in raw.splitlines():
@@ -313,19 +314,46 @@ def find_product_images(query: str, k: int = 3) -> list[dict]:
 
 # ─────────────────────────────────────────────────────────── models
 
+# Groq retired both Llama chat models this project was evaluated on
+# (llama-3.3-70b-versatile and llama-3.1-8b-instant): the endpoint now returns
+# 404 model_not_found for them. They are replaced by the closest open-weights
+# models Groq still serves, keeping the "open-source LLM" requirement intact:
+#   llama-3.3-70b-versatile  ->  openai/gpt-oss-120b   (large, best quality)
+#   llama-3.1-8b-instant     ->  openai/gpt-oss-20b    (small, fastest)
+# The measured scores below were obtained on the Llama models; the pipeline
+# (retrieval, MultiQuery, prompts) is unchanged, only the answer model swapped.
+DEPRECATION_NOTE = (
+    "**Model update — the evaluated Llama models were retired by Groq.**\n\n"
+    "`llama-3.3-70b-versatile` and `llama-3.1-8b-instant` were decommissioned on "
+    "Groq and now return `404 model_not_found`, which crashed the app. They have "
+    "been swapped for the closest **open-weights** models Groq still serves — "
+    "`openai/gpt-oss-120b` (in place of Llama 3.3 70B) and `openai/gpt-oss-20b` "
+    "(in place of Llama 3.1 8B) — so the open-source-LLM requirement still holds. "
+    "Retrieval, MultiQuery and all prompts are unchanged; only the answer model "
+    "differs, so the reported evaluation scores were measured on the Llama models, "
+    "not on these."
+)
+
 MODELS = {
-    "llama-3.3-70b": {"provider": "groq", "id": "llama-3.3-70b-versatile",
-                      "label": "Llama 3.3 70B (open weights, best measured)"},
-    "llama-3.1-8b": {"provider": "groq", "id": "llama-3.1-8b-instant",
-                     "label": "Llama 3.1 8B (open weights, fastest)"},
+    "gpt-oss-120b": {"provider": "groq", "id": "openai/gpt-oss-120b",
+                     "label": "GPT-OSS 120B (open weights, replaces Llama 3.3 70B)"},
+    "gpt-oss-20b": {"provider": "groq", "id": "openai/gpt-oss-20b",
+                    "label": "GPT-OSS 20B (open weights, replaces Llama 3.1 8B)"},
     "gpt-4o-mini": {"provider": "openai", "id": "gpt-4o-mini",
                     "label": "GPT-4o-mini (hosted, low latency)"},
+}
+
+# Old keys still appear in saved defaults, notebooks and smoke tests; map them
+# onto the replacements instead of raising KeyError.
+LEGACY_MODEL_KEYS = {
+    "llama-3.3-70b": "gpt-oss-120b",
+    "llama-3.1-8b": "gpt-oss-20b",
 }
 
 
 @lru_cache(maxsize=4)
 def get_chat_model(key: str, temperature: float = 0.0):
-    spec = MODELS[key]
+    spec = MODELS[LEGACY_MODEL_KEYS.get(key, key)]
     if spec["provider"] == "openai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model=spec["id"], temperature=temperature)
@@ -373,7 +401,7 @@ def _resolve_followup(question: str, history, llm) -> str:
         return question
 
 
-def answer_text_question(question: str, model_key: str = "llama-3.3-70b",
+def answer_text_question(question: str, model_key: str = "gpt-oss-120b",
                          use_multiquery: bool = True, history=None) -> dict:
     """Text chat path. Returns answer, sources, retrieved docs, and diagnostics."""
     from langchain_core.prompts import ChatPromptTemplate
@@ -435,7 +463,7 @@ def answer_text_question(question: str, model_key: str = "llama-3.3-70b",
 
 
 def answer_image_question(image, question: str | None = None,
-                          model_key: str = "llama-3.3-70b", history=None) -> dict:
+                          model_key: str = "gpt-oss-120b", history=None) -> dict:
     """Image upload path: fusion retrieval, confidence gate, grounded answer."""
     from langchain_core.prompts import ChatPromptTemplate
 

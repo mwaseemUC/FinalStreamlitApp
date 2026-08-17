@@ -62,16 +62,20 @@ st.sidebar.caption("CLIP retrieval + grounded LLM answers over 10,001 Amazon pro
 # Default to the open-weights model: it scores highest on our evaluation rubric
 # (13/14 vs 12/14) and satisfies the project's open-source LLM requirement.
 # It is slower (~8-10s vs ~1.4s), so gpt-4o-mini is offered as a fast fallback.
-_MODEL_ORDER = ["llama-3.3-70b", "gpt-4o-mini", "llama-3.1-8b"]
+# The two Llama entries this list used to hold were retired by Groq -- see
+# core.DEPRECATION_NOTE, rendered below and in the main pane.
+_MODEL_ORDER = ["gpt-oss-120b", "gpt-4o-mini", "gpt-oss-20b"]
 model_key = st.sidebar.selectbox(
     "Answer model",
     [k for k in _MODEL_ORDER if k in core.MODELS],
     format_func=lambda k: core.MODELS[k]["label"],
     index=0,
-    help="Llama 3.3 70B (default) scores highest on our evaluation, 13/14, and "
-         "is open-weights. GPT-4o-mini scores 12/14 and answers ~6x faster if "
-         "you need lower latency.",
+    help="GPT-OSS 120B (default) is the open-weights stand-in for Llama 3.3 70B, "
+         "which Groq retired. GPT-4o-mini scored 12/14 on our evaluation and "
+         "answers ~6x faster if you need lower latency.",
 )
+
+st.sidebar.warning(core.DEPRECATION_NOTE, icon="⚠️")
 use_mq = st.sidebar.toggle(
     "MultiQuery retrieval", value=True,
     help="Expands your question into several search queries and unions the "
@@ -83,7 +87,8 @@ st.sidebar.divider()
 st.sidebar.markdown(
     """**Measured performance**
 
-*Text*: 13/14 on the evaluation rubric (MultiQuery + Llama-3.3-70B).
+*Text*: 13/14 on the evaluation rubric (MultiQuery + Llama-3.3-70B — the model
+Groq has since retired; answers now come from GPT-OSS 120B).
 
 *Image*: on photographs the system has never seen, the top match is right
 **59%** of the time; the **three shown** contain it **71%** of the time.
@@ -281,6 +286,13 @@ st.caption(
     "picture. Answers are grounded in the catalog: the assistant declines rather "
     "than guessing when the catalog doesn't cover your question."
 )
+
+# Shown in the main pane, not only the sidebar: the retired Llama models are the
+# reason the deployed app used to crash with 404 model_not_found, so anyone
+# opening the app should see the swap without hunting for it.
+with st.expander("⚠️ Model change: the evaluated Llama models were retired by Groq",
+                 expanded=not st.session_state.get("rendered")):
+    st.markdown(core.DEPRECATION_NOTE)
 
 if not st.session_state.get("rendered"):
     with st.expander("What can I ask?", expanded=True):
