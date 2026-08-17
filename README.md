@@ -11,6 +11,44 @@ application extracted from it.
 
 ---
 
+## Model change: Llama → GPT-OSS (Groq retirement)
+
+**Groq has decommissioned both Llama models this app was built on.** Requests to
+`llama-3.3-70b-versatile` and `llama-3.1-8b-instant` now return HTTP 404
+`model_not_found`, which surfaced as a `groq.NotFoundError` raised inside
+`generate_multi_queries` in `rag_core.py` and took down the deployed Streamlit
+Cloud app on the first question asked.
+
+Both were replaced with the closest open-weights models Groq still serves:
+
+| Was | Now | Role |
+|---|---|---|
+| `llama-3.3-70b-versatile` | `openai/gpt-oss-120b` | Default answer model |
+| `llama-3.1-8b-instant` | `openai/gpt-oss-20b` | Fast option |
+
+GPT-OSS is open-weights and served by the same Groq endpoint, so the project's
+**open-source LLM requirement still holds** and no key, provider, or dependency
+changed. `gpt-4o-mini` via OpenAI remains the hosted fallback it always was.
+
+What changed in code: the `MODELS` keys in `rag_core.py` are now `gpt-oss-120b`
+and `gpt-oss-20b`; a `LEGACY_MODEL_KEYS` alias map keeps the old
+`llama-3.3-70b` / `llama-3.1-8b` keys resolving, so saved sessions and any
+external caller do not break; a `DEPRECATION_NOTE` constant carries the
+user-facing text, which `app.py` renders in the sidebar and as an expander in
+the main pane.
+
+Retrieval, MultiQuery expansion, the fusion weights, the confidence gate and
+every prompt are untouched — only the model that writes the final answer
+differs. Verified after the swap: both GPT-OSS models return 200 from Groq, and
+*"What is the price of the DB Longboards CoreFlex Crossbow?"* answers correctly
+($237.68) end-to-end through MultiQuery retrieval.
+
+**The evaluation scores below were measured on the Llama models and have not
+been re-measured on GPT-OSS.** They are reported here as the numbers that were
+actually observed, not as a claim about the current answer model.
+
+---
+
 ## What it does
 
 | Interaction | Example | How it works |
@@ -26,10 +64,18 @@ inventing an answer. That behaviour is the main thing the evaluation measures.
 
 | Path | Metric | Result |
 |---|---|---|
-| Text | Evaluation rubric (14 questions) | **13/14** with MultiQuery + Llama-3.3-70B (retired by Groq; now served by GPT-OSS 120B) |
+| Text | Evaluation rubric (14 questions) | **13/14** with MultiQuery, measured on Llama-3.3-70B † |
 | Text retrieval | Recall@5, 1,500 generated customer queries | 0.487 (0.395 without MultiQuery) |
 | Image | Recall@1 / Recall@5, **held-out** photos | **0.592 / 0.751** |
 | Image gate | Precision @ coverage | **0.804 @ 0.650** (AUC 0.903) |
+
+† The rubric score was measured on `llama-3.3-70b-versatile`, which Groq has
+since retired (see above). The answer model is now `openai/gpt-oss-120b`;
+retrieval, MultiQuery and the prompts are unchanged, but the rubric was **not
+re-run** on GPT-OSS, so treat 13/14 as a Llama-era measurement. The same applies
+to the MultiQuery text-retrieval row, since the query expansion is itself an LLM
+call. The image rows (R@1 0.592, R@5 0.751, and the gate) are CLIP-only,
+involve no LLM at all, and are unaffected by the swap.
 
 "Held-out" means the query photo is a *different* picture of the product from the
 one indexed, the honest analogue of a customer's own photo.
